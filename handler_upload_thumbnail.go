@@ -1,12 +1,16 @@
 package main
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -49,8 +53,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	mediaType := header.Header.Get("Content-Type")
 
-	imageData, err := io.ReadAll(file)
-
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Unable to read file data", err)
 		return
@@ -72,9 +74,49 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	encodedImage := base64.StdEncoding.EncodeToString(imageData)
+	fileType, _, err := mime.ParseMediaType(mediaType)
 
-	thumbnailURL := fmt.Sprintf("data:%s;base64,%s", mediaType, encodedImage)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "invalid Content-Type", err)
+		return
+	}
+
+	fileExtension, ok := typeMap[fileType]
+
+	if !ok {
+		respondWithError(w, http.StatusUnsupportedMediaType, "unsupported Content-Type: "+fileType, nil)
+		return
+	}
+
+	randomBytes := make([]byte, 32)
+	_, err = rand.Read(randomBytes)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "unable to generate filename", err)
+		return
+	}
+
+	filename := base64.RawURLEncoding.EncodeToString(randomBytes)
+
+	pathname := filepath.Join(cfg.assetsRoot, filename+"."+fileExtension)
+
+	f, err := os.Create(pathname)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "unable to create file", err)
+		return
+	}
+
+	defer f.Close()
+
+	_, err = io.Copy(f, file)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "unable to write to file", err)
+		return
+	}
+
+	thumbnailURL := fmt.Sprintf("http://localhost:%s/assets/%s.%s", cfg.port, filename, fileExtension)
 	videoData.ThumbnailURL = &thumbnailURL
 
 	err = cfg.db.UpdateVideo(videoData)
