@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -38,9 +39,11 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
-	const maxMemory = 10 << 20
-
-	r.ParseMultipartForm(maxMemory)
+	r.Body = http.MaxBytesReader(w, r.Body, MaxImageMemory)
+	if err := r.ParseMultipartForm(MaxImageMemory); err != nil {
+		respondWithError(w, http.StatusBadRequest, "Unable to parse multipart form", err)
+		return
+	}
 
 	file, header, err := r.FormFile("thumbnail")
 
@@ -52,11 +55,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	defer file.Close()
 
 	mediaType := header.Header.Get("Content-Type")
-
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Unable to read file data", err)
-		return
-	}
 
 	videoData, err := cfg.db.GetVideo(videoID)
 
@@ -83,15 +81,13 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	fileExtension, ok := typeMap[fileType]
 
-	if !ok {
+	if !ok || !slices.Contains(ValidImageTypes, fileExtension) {
 		respondWithError(w, http.StatusUnsupportedMediaType, "unsupported Content-Type: "+fileType, nil)
 		return
 	}
 
-	randomBytes := make([]byte, 32)
-	_, err = rand.Read(randomBytes)
-
-	if err != nil {
+	randomBytes := make([]byte, FilenameByteSize)
+	if _, err = rand.Read(randomBytes); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "unable to generate filename", err)
 		return
 	}
@@ -109,9 +105,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	defer f.Close()
 
-	_, err = io.Copy(f, file)
-
-	if err != nil {
+	if _, err = io.Copy(f, file); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "unable to write to file", err)
 		return
 	}
@@ -119,9 +113,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	thumbnailURL := fmt.Sprintf("http://localhost:%s/assets/%s.%s", cfg.port, filename, fileExtension)
 	videoData.ThumbnailURL = &thumbnailURL
 
-	err = cfg.db.UpdateVideo(videoData)
-
-	if err != nil {
+	if err = cfg.db.UpdateVideo(videoData); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "database error", err)
 		return
 	}
