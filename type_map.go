@@ -5,4 +5,5 @@ var typeMap = map[string]string{
 	"image/jpeg": "jpg",
 	"image/webp": "webp",
 	"image/gif":  "gif",
+	"video/mp4":  "mp4",
 }
