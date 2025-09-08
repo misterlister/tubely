@@ -97,7 +97,32 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	tempFile.Seek(0, io.SeekStart)
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "aspect ratio error", err)
+		return
+	}
+
+	ratioPrefix := getAspectRatioPrefix(aspectRatio)
+
+	processedFilepath, err := processVideoForFastStart(tempFile.Name())
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "unable to preprocess file", err)
+		return
+	}
+
+	processedFile, err := os.Open(processedFilepath)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "unable to open preprocessed file", err)
+		return
+	}
+
+	defer os.Remove(processedFile.Name())
+
+	defer processedFile.Close()
 
 	randomBytes := make([]byte, FilenameByteSize)
 	if _, err = rand.Read(randomBytes); err != nil {
@@ -107,12 +132,12 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	hexKey := hex.EncodeToString(randomBytes)
 
-	key := fmt.Sprintf("%s.%s", hexKey, fileExtension)
+	key := fmt.Sprintf("%s%s.%s", ratioPrefix, hexKey, fileExtension)
 
 	input := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &key,
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: &fileType,
 	}
 
